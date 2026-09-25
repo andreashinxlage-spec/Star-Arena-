@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Star Arena – Mini Brawler</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#111827;font-family:system-ui,sans-serif}
+body{display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,960px);height:min(100vh,640px);image-rendering:auto;background:#5ca84d;border-radius:14px;box-shadow:0 12px 40px #0008}
+#hint{position:fixed;bottom:8px;color:#fff9;font-size:13px;text-align:center}
+
+#mobileControls{display:none;position:fixed;inset:0;z-index:4;pointer-events:none;touch-action:none}
+#joystick{position:absolute;left:24px;bottom:28px;width:132px;height:132px;border-radius:50%;background:#ffffff22;border:3px solid #ffffff55;pointer-events:auto;touch-action:none;box-sizing:border-box}
+#stick{position:absolute;left:35px;top:35px;width:56px;height:56px;border-radius:50%;background:#ffffffaa;border:2px solid #fff;box-sizing:border-box;transform:translate(0,0)}
+#menuBtn{position:absolute;right:28px;top:20px;width:54px;height:44px;border-radius:12px;border:2px solid #fff;background:#111827cc;color:#fff;font-size:22px;pointer-events:auto;touch-action:none}
+#fireBtn{position:absolute;right:28px;bottom:38px;width:92px;height:92px;border-radius:50%;border:3px solid #fff;background:#ef4444cc;color:white;font-size:38px;box-shadow:0 5px 18px #0008;pointer-events:auto;touch-action:none;-webkit-user-select:none;user-select:none}
+@media (pointer:coarse),(max-width:900px){#mobileControls{display:block}#hint{display:none}}
+@media (max-width:600px){#joystick{left:18px;bottom:20px;width:140px;height:140px}#stick{left:37px;top:37px;width:62px;height:62px}#fireBtn{right:18px;bottom:24px;width:96px;height:96px}#menuBtn{right:18px;top:16px}}
+</style>
+</head>
+<body>
+<div id="select" style="position:fixed;inset:0;background:#111827ee;z-index:5;display:flex;align-items:center;justify-content:center;color:white">
+<div style="background:#1f2937;padding:28px;border-radius:20px;text-align:center;max-width:760px;width:90%">
+<h1>⭐ STAR ARENA</h1><p>Schalte neue Figuren frei, indem du Runden gewinnst!</p>
+<div id="chars" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap"></div>
+</div></div>
+<canvas id="game" width="960" height="640"></canvas>
+<div id="hint">WASD/Pfeile bewegen · Maus schießen · R neue Runde · M Figurenmenü</div>
+<div id="mobileControls">
+  <div id="joystick"><div id="stick"></div></div>
+  <button id="menuBtn" aria-label="Figurenmenü">☰</button><button id="fireBtn">🔥</button>
+</div>
+<script>
+const c=document.getElementById('game'),x=c.getContext('2d');
+const W=960,H=640;
+let keys={},mouse={x:480,y:320,down:false},shots=[],bots=[],particles=[],score=0,gameOver=false,time=0;
+let touchMove={active:false,x:0,y:0},touchFire=false;
+const characterTypes=[
+ {name:'Henry',emoji:'🔥',color:'#ef4444',hp:100,speed:4.0,damage:22,rate:15,range:520,desc:'Schnell & stark'},
+ {name:'Tanky',emoji:'🛡️',color:'#3b82f6',hp:160,speed:2.7,damage:30,rate:24,range:430,desc:'Viel Leben'},
+ {name:'Volt',emoji:'⚡',color:'#facc15',hp:80,speed:4.6,damage:15,rate:9,range:560,desc:'Extrem schnell'},
+ {name:'Nova',emoji:'🌟',color:'#a855f7',hp:110,speed:3.3,damage:45,rate:32,range:700,desc:'Starker Schuss'},
+ {name:'Frost',emoji:'❄️',color:'#38bdf8',hp:125,speed:3.4,damage:28,rate:17,range:550,desc:'Eisiger Kämpfer'},
+ {name:'Leonidas',emoji:'👻',color:'#64748b',hp:90,speed:5.0,damage:20,rate:11,range:500,desc:'Extrem schnell'},
+ {name:'Jonas',emoji:'🦖',color:'#22c55e',hp:190,speed:2.3,damage:36,rate:28,range:450,desc:'Schwer & stark'},
+ {name:'Cosmo',emoji:'🚀',color:'#ec4899',hp:105,speed:4.2,damage:32,rate:14,range:650,desc:'Starke Raketen'},
+ {name:'Luna',emoji:'🌙',color:'#818cf8',hp:115,speed:3.8,damage:34,rate:16,range:620,desc:'Meisterin der Nacht'},
+ {name:'Inferno',emoji:'🌋',color:'#f97316',hp:135,speed:3.0,damage:40,rate:25,range:500,desc:'Explosive Kraft'},
+ {name:'Aqua',emoji:'💧',color:'#06b6d4',hp:145,speed:3.2,damage:25,rate:13,range:580,desc:'Zäh und präzise'},
+ {name:'Phantom',emoji:'🌀',color:'#c084fc',hp:85,speed:5.2,damage:24,rate:10,range:540,desc:'Der schnellste Kämpfer'}
+];
+let chosen=0;
+let unlocked=Number(localStorage.getItem('starArenaUnlocked')||1);
+if(unlocked<1) unlocked=1;
+if(unlocked>characterTypes.length) unlocked=characterTypes.length;
+const player={x:180,y:320,r:22,hp:100,max:100,speed:3.7,cool:0,damage:22,rate:15,range:520,color:'#ef4444'};
+const walls=[
+ {x:300,y:110,w:35,h:180},{x:300,y:350,w:35,h:180},
+ {x:625,y:110,w:35,h:180},{x:625,y:350,w:35,h:180},
+ {x:420,y:275,w:120,h:90}
+];
+const chars=document.getElementById('chars');
+function renderCharacters(){
+ chars.innerHTML='';
+ characterTypes.forEach((ch,i)=>{
+  const b=document.createElement('button');
+  const open=i<unlocked;
+  const need=i;
+  const status=open?ch.desc:(need===1?'Nach 1 Sieg freischalten':`Nach ${need} Siegen freischalten`);
+  b.innerHTML=`<div style="font-size:42px">${open?ch.emoji:'🔒'}</div><b>${ch.name}</b><br><small>${status}</small>`;
+  b.style.cssText=`width:150px;padding:14px;border:2px solid ${open?ch.color:'#4b5563'};border-radius:14px;background:${open?'#111827':'#374151'};color:white;cursor:${open?'pointer':'not-allowed'};opacity:${open?1:.65}`;
+  b.disabled=!open;
+  if(open)b.onclick=()=>{chosen=i;const a=characterTypes[i];Object.assign(player,{hp:a.hp,max:a.hp,speed:a.speed,damage:a.damage,rate:a.rate,range:a.range,color:a.color});document.getElementById('select').style.display='none';reset()};
+  chars.appendChild(b);
+ });
+}
+renderCharacters();
+function reset(){
+ player.x=180;player.y=320;const a=characterTypes[chosen];player.hp=a.hp;player.max=a.hp;player.speed=a.speed;player.damage=a.damage;player.rate=a.rate;player.range=a.range;player.color=a.color;score=0;gameOver=false;shots=[];particles=[];
+ bots=[
+  {x:790,y:170,r:21,hp:55,max:55,cd:50,s:1.4},
+  {x:790,y:470,r:21,hp:55,max:55,cd:80,s:1.25},
+  {x:540,y:130,r:21,hp:55,max:55,cd:110,s:1.1},
+  {x:520,y:510,r:21,hp:55,max:55,cd:130,s:1.15}
+ ];
+}
+addEventListener('keydown',e=>{
+ keys[e.key.toLowerCase()]=true;
+ if(e.key.toLowerCase()==='r')reset();
+ if(e.key.toLowerCase()==='m'){renderCharacters();document.getElementById('select').style.display='flex'}
+});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+c.addEventListener('mousemove',e=>{let r=c.getBoundingClientRect();mouse.x=(e.clientX-r.left)*W/r.width;mouse.y=(e.clientY-r.top)*H/r.height});
+c.addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',()=>mouse.down=false);
+
+// Mobile controls: virtual joystick + fire button
+const joystick=document.getElementById('joystick'),stick=document.getElementById('stick'),fireBtn=document.getElementById('fireBtn'),menuBtn=document.getElementById('menuBtn');
+menuBtn.addEventListener('click',()=>{renderCharacters();document.getElementById('select').style.display='flex';touchFire=false;joystickEnd();});
+function joystickMove(t){
+  const r=joystick.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+  let dx=t.clientX-cx,dy=t.clientY-cy,max=42,len=Math.hypot(dx,dy);
+  if(len>max){dx=dx/len*max;dy=dy/len*max}
+  stick.style.transform=`translate(${dx}px,${dy}px)`;
+  touchMove.x=dx/max;touchMove.y=dy/max;
+}
+function joystickEnd(){touchMove.active=false;touchMove.x=touchMove.y=0;stick.style.transform='translate(0,0)'}
+joystick.addEventListener('touchstart',e=>{e.preventDefault();touchMove.active=true;joystickMove(e.touches[0])},{passive:false});
+joystick.addEventListener('touchmove',e=>{e.preventDefault();if(touchMove.active)joystickMove(e.touches[0])},{passive:false});
+joystick.addEventListener('touchend',e=>{e.preventDefault();joystickEnd()},{passive:false});
+joystick.addEventListener('touchcancel',joystickEnd);
+fireBtn.addEventListener('touchstart',e=>{e.preventDefault();touchFire=true},{passive:false});
+fireBtn.addEventListener('touchend',e=>{e.preventDefault();touchFire=false},{passive:false});
+fireBtn.addEventListener('touchcancel',()=>touchFire=false);
+
+
+function circleRect(cx,cy,r,q){
+ let nx=Math.max(q.x,Math.min(cx,q.x+q.w)),ny=Math.max(q.y,Math.min(cy,q.y+q.h));
+ return (cx-nx)**2+(cy-ny)**2<r*r;
+}
+function blocked(o,nx,ny){
+ if(nx-o.r<8||nx+o.r>W-8||ny-o.r<55||ny+o.r>H-8)return true;
+ return walls.some(q=>circleRect(nx,ny,o.r,q));
+}
+function move(o,dx,dy){
+ if(!blocked(o,o.x+dx,o.y))o.x+=dx;
+ if(!blocked(o,o.x,o.y+dy))o.y+=dy;
+}
+function puff(px,py,color='#fff'){
+ for(let i=0;i<7;i++)particles.push({x:px,y:py,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4,life:18,color});
+}
+function fire(from,tx,ty,enemy){
+ let a=Math.atan2(ty-from.y,tx-from.x);
+ shots.push({x:from.x+Math.cos(a)*24,y:from.y+Math.sin(a)*24,vx:Math.cos(a)*8,vy:Math.sin(a)*8,enemy,life:80});
+}
+function update(){
+ if(gameOver)return;
+ time++;
+ let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);
+ let dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+ if(dx||dy){let l=Math.hypot(dx,dy);move(player,dx/l*player.speed,dy/l*player.speed)}
+ if(player.cool>0)player.cool--;
+ if((mouse.down||touchFire)&&player.cool<=0){
+    let tx=mouse.x,ty=mouse.y;
+    if(touchFire){
+      // Auto-aim at the nearest living enemy on mobile.
+      let target=null,best=Infinity;
+      for(const b of bots)if(b.hp>0){let d=Math.hypot(b.x-player.x,b.y-player.y);if(d<best){best=d;target=b}}
+      if(target){tx=target.x;ty=target.y}
+      else {tx=player.x+1;ty=player.y}
+    }
+    fire(player,tx,ty,false);player.cool=player.rate
+  }
+ for(const b of bots){
+   if(b.hp<=0)continue;
+   let dx=player.x-b.x,dy=player.y-b.y,d=Math.hypot(dx,dy);
+   if(d>180)move(b,dx/d*b.s,dy/d*b.s);
+   else if(d<125)move(b,-dx/d*b.s,-dy/d*b.s);
+   b.cd--;
+   if(d<520&&b.cd<=0){fire(b,player.x,player.y,true);b.cd=65+Math.random()*45}
+ }
+ for(const s of shots){
+   s.x+=s.vx;s.y+=s.vy;s.life--;
+   if(walls.some(q=>circleRect(s.x,s.y,4,q)))s.life=0;
+   if(!s.enemy){
+     for(const b of bots)if(b.hp>0&&Math.hypot(s.x-b.x,s.y-b.y)<b.r+5){
+       b.hp-=player.damage;s.life=0;puff(s.x,s.y,'#ffd166');
+       if(b.hp<=0){score++;puff(b.x,b.y,'#ff5d73')}
+     }
+   }else if(Math.hypot(s.x-player.x,s.y-player.y)<player.r+5){
+     player.hp-=12;s.life=0;puff(s.x,s.y,'#9be7ff');
+     if(player.hp<=0)gameOver=true;
+   }
+ }
+ shots=shots.filter(s=>s.life>0&&s.x>-20&&s.x<W+20&&s.y>40&&s.y<H+20);
+ particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--});particles=particles.filter(p=>p.life>0);
+ if(score===bots.length){
+  gameOver=true;
+  if(unlocked<characterTypes.length){
+    unlocked++;
+    localStorage.setItem('starArenaUnlocked',String(unlocked));
+    renderCharacters();
+  }
+}
+}
+function draw(){
+ x.clearRect(0,0,W,H);
+ // ground
+ x.fillStyle='#5ba94f';x.fillRect(0,0,W,H);
+ for(let i=0;i<70;i++){let px=(i*137)%W,py=65+(i*83)%560;x.fillStyle=i%2?'#4e9846':'#67b158';x.fillRect(px,py,3,3)}
+ // arena border
+ x.fillStyle='#314e2d';x.fillRect(0,0,W,54);x.fillStyle='#20351e';x.fillRect(0,H-8,W,8);
+ // walls
+ for(const q of walls){x.fillStyle='#7b583d';x.fillRect(q.x+5,q.y+7,q.w,q.h);x.fillStyle='#a8734c';x.fillRect(q.x,q.y,q.w,q.h);x.strokeStyle='#633f2b';x.strokeRect(q.x,q.y,q.w,q.h)}
+ // center gem
+ x.fillStyle='#8e5cf7';x.beginPath();x.moveTo(480,305);x.lineTo(495,320);x.lineTo(480,335);x.lineTo(465,320);x.closePath();x.fill();
+ // shots
+ for(const s of shots){x.fillStyle=s.enemy?'#ff5570':'#ffe06b';x.beginPath();x.arc(s.x,s.y,5,0,7);x.fill()}
+ // bots
+ for(const b of bots)if(b.hp>0){
+   x.fillStyle='#e74c5b';x.beginPath();x.arc(b.x,b.y,b.r,0,7);x.fill();
+   x.fillStyle='#fff';x.beginPath();x.arc(b.x-7,b.y-4,4,0,7);x.arc(b.x+7,b.y-4,4,0,7);x.fill();
+   x.fillStyle='#222';x.beginPath();x.arc(b.x-7,b.y-4,2,0,7);x.arc(b.x+7,b.y-4,2,0,7);x.fill();
+   x.fillStyle='#222';x.fillRect(b.x-24,b.y-32,48,6);x.fillStyle='#63d471';x.fillRect(b.x-24,b.y-32,48*(b.hp/b.max),6);
+ }
+ // player
+ x.fillStyle=player.color;x.beginPath();x.arc(player.x,player.y,player.r,0,7);x.fill();
+ x.fillStyle='#fff';x.beginPath();x.arc(player.x-7,player.y-5,4,0,7);x.arc(player.x+7,player.y-5,4,0,7);x.fill();
+ x.fillStyle='#222';x.beginPath();x.arc(player.x-7,player.y-5,2,0,7);x.arc(player.x+7,player.y-5,2,0,7);x.fill();
+ // particles
+ for(const p of particles){x.globalAlpha=p.life/18;x.fillStyle=p.color;x.fillRect(p.x,p.y,5,5)}x.globalAlpha=1;
+ // UI
+ x.fillStyle='#fff';x.font='bold 22px system-ui';x.fillText('STAR ARENA · '+characterTypes[chosen].name,20,34);
+ x.font='bold 16px system-ui';x.fillText('KOs: '+score+' / '+bots.length,760,34);
+ x.fillStyle='#222';x.fillRect(20,570,220,20);x.fillStyle='#46d66b';x.fillRect(20,570,220*Math.max(0,player.hp/player.max),20);
+ x.strokeStyle='#fff';x.strokeRect(20,570,220,20);x.fillStyle='#fff';x.font='bold 14px system-ui';x.fillText('HP '+Math.max(0,player.hp),28,586);
+ if(gameOver){
+   x.fillStyle='#000b';x.fillRect(0,0,W,H);x.textAlign='center';
+   x.fillStyle='#fff';x.font='bold 52px system-ui';x.fillText(score===bots.length?'SIEG!':'GAME OVER',W/2,285);
+   x.font='22px system-ui';x.fillText(score===bots.length?(unlocked<characterTypes.length?'Neue Figur freigeschaltet!':'Alle Figuren freigeschaltet!'):'Drücke R für eine neue Runde',W/2,330);
+   x.font='16px system-ui';x.fillText('Im Menü kannst du deine freigeschalteten Figuren wählen.',W/2,360);x.textAlign='left';
+ }
+}
+function loop(){update();draw();requestAnimationFrame(loop)}
+loop();
+</script>
+</body>
+</html>
